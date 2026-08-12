@@ -72,6 +72,8 @@ def main() -> None:
     if process.returncode != 0:
         raise RuntimeError(process.stdout + process.stderr)
 
+    for cache in output_root.rglob("__pycache__"):
+        shutil.rmtree(cache)
     paths = {path.relative_to(output_root).as_posix() for path in output_root.rglob("*") if path.is_file()}
     directories = {path.relative_to(output_root).as_posix() for path in output_root.rglob("*") if path.is_dir()}
     if paths != EXPECTED_PATHS:
