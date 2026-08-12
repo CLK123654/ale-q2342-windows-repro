@@ -42,8 +42,8 @@ jobs:
         shell: pwsh
         run: |
           $workspace = $env:GITHUB_WORKSPACE
-          $wslWorkspace = (wsl.exe --distribution Ubuntu-24.04 --user root -- wslpath -a $workspace).Trim()
-          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "rsync -a --exclude=.git '$wslWorkspace/' /root/q2342/"
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "mkdir -p /root/q2342"
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "cp -a /mnt/d/a/ale-q2342-windows-repro/ale-q2342-windows-repro/. /root/q2342/"
 
       - name: Run formal reproduction without external network
         shell: pwsh
@@ -54,9 +54,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $workspace = $env:GITHUB_WORKSPACE
-          $wslWorkspace = (wsl.exe --distribution Ubuntu-24.04 --user root -- wslpath -a $workspace).Trim()
-          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "if [ -d /root/q2342/evidence ]; then mkdir -p '$wslWorkspace/evidence' && cp -a /root/q2342/evidence/. '$wslWorkspace/evidence/'; fi"
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "if [ -d /root/q2342/evidence ]; then mkdir -p /mnt/d/a/ale-q2342-windows-repro/ale-q2342-windows-repro/evidence && cp -a /root/q2342/evidence/. /mnt/d/a/ale-q2342-windows-repro/ale-q2342-windows-repro/evidence/; fi"
           New-Item -ItemType Directory -Force -Path evidence/network-evidence | Out-Null
           Copy-Item host-evidence/* evidence/network-evidence/
 
