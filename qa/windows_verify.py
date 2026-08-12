@@ -36,8 +36,10 @@ def normalized_reference_tree(root: Path) -> dict[str, str]:
         if not path.is_file():
             continue
         relative = path.relative_to(root).as_posix()
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
         data = path.read_bytes()
-        if relative.endswith(".csv"):
+        if relative.endswith((".csv", ".py")):
             data = data.replace(b"\r\n", b"\n")
         normalized[relative] = hashlib.sha256(data).hexdigest()
     return normalized
