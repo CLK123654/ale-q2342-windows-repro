@@ -119,8 +119,15 @@ def main() -> None:
             migrate, process = build(input_root, output_root, dag_file, home)
             if migrate.returncode != 0 or process.returncode != 0:
                 raise RuntimeError(migrate.stdout + migrate.stderr + process.stdout + process.stderr)
-            if normalized_reference_tree(output_root) != reference_tree:
-                raise AssertionError(f"Reference mismatch in {directory_id} process {process_index}")
+            output_tree = normalized_reference_tree(output_root)
+            if output_tree != reference_tree:
+                mismatch = {
+                    key: {"reference": reference_tree.get(key), "output": output_tree.get(key)}
+                    for key in sorted(set(reference_tree) | set(output_tree))
+                    if reference_tree.get(key) != output_tree.get(key)
+                }
+                (EVIDENCE / "reference-mismatch.json").write_text(json.dumps(mismatch, ensure_ascii=False, indent=2), encoding="utf-8")
+                raise AssertionError(f"Reference mismatch in {directory_id} process {process_index}: {sorted(mismatch)}")
             clean_runs.append(
                 {
                     "directory_id": directory_id,
