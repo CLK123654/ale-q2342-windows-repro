@@ -48,7 +48,8 @@ jobs:
       - name: Run formal reproduction without external network
         shell: pwsh
         run: |
-          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "cd /root/q2342 && source /root/airflow-venv/bin/activate && python qa/windows_verify.py"
+          $hostLabel = "Windows Server 2025 build 26100"
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "cd /root/q2342 && export GITHUB_SHA='$env:GITHUB_SHA' GITHUB_RUN_ID='$env:GITHUB_RUN_ID' ImageOS='$env:ImageOS' ALE_WINDOWS_HOST='$hostLabel' ALE_WSL_VERSION='2' && source /root/airflow-venv/bin/activate && python qa/windows_verify.py"
 
       - name: Collect independent evidence
         if: always()
