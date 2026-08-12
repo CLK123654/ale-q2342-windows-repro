@@ -12,13 +12,13 @@
 检查项：输入关系与失败关闭
 优先级：Gate项
 所属层级：L5多源关联与字段一致性层
-标准答案：五个request_id、三个team_id、两个pool_name和两个scenario_id分别唯一。每条申请的team_id存在，pool_name等于对应allowed_pool，pool_slots在1至max_pool_slots之间，场景中的fail_request_id为空或属于申请集合。重复主键、未知团队、Pool不符、槽位越界或未知失败对象必须非零退出，并且不留下本轮交付物。
-关键字段：training_requests.csv的request_id、team_id、pool_name、pool_slots；team_controls.csv的allowed_pool、max_pool_slots；rehearsal_scenarios.csv的scenario_id、fail_request_id
+标准答案：运行入口接受input、output和dag-file三个参数。输入中的request_id、team_id、pool_name和scenario_id分别唯一；申请能够连接团队和Pool，槽位不超过团队上限，失败对象属于申请集合。有效输入返回0；输入错误或output已存在时返回非0，不创建或覆盖交付物。
+关键字段：input、output、dag-file、request_id、team_id、pool_name、pool_slots、fail_request_id、进程退出码
 容差：字符串逐字比较，槽位按整数比较
-失败边界：任一关系错误仍继续运行，或错误退出后留下报告、DAG、工具文件或其他本轮产物，本项失败
-可观察证据：输入材料、进程退出码、标准错误、交付目录状态
-客观硬性标准：四类主键集合唯一且全部关联规则成立，五类无效输入均停止且无残留
-阈值：有效输入零项关系错误，任一无效输入均非零退出
+失败边界：缺少参数仍运行、任一关系错误仍继续、错误退出后留下本轮产物或已有output被覆盖，本项失败
+可观察证据：输入材料、运行命令、进程退出码、标准错误和交付目录状态
+客观硬性标准：参数可用，全部关联规则成立，无效输入和已存在output均失败关闭
+阈值：有效输入返回0并生成交付；任一无效输入返回非0且无目录残留
 
 检查项：DagBag导入与DAG边界
 优先级：Gate项
@@ -34,7 +34,7 @@
 检查项：setup与teardown闭环
 优先级：高权重项
 所属层级：L7产物结构或Schema或专业对象层
-标准答案：acquire_release_lease的is_setup为true；release_release_lease的is_teardown为true，trigger_rule为all_done_setup_success，并与setup关联。两个场景各有一次LEASE_ACQUIRED和一次LEASE_RELEASED，object_id均为gpu-release-window。
+标准答案：acquire_release_lease的is_setup为true；release_release_lease的is_teardown为true，trigger_rule与release_policy.json的teardown_trigger_rule相同，并与setup关联。两个场景各有一次LEASE_ACQUIRED和一次LEASE_RELEASED，object_id、event_order和detail分别与release_policy.json中的租约字段相同。
 关键字段：is_setup、is_teardown、trigger_rule、scenario_id、event_type、object_id
 容差：逐字比较；每个场景每类租约事件计数必须等于1
 失败边界：setup或teardown标记错误、teardown未与setup关联、任一场景缺少释放、事件重复或租约名称不符，本项失败
@@ -56,7 +56,7 @@
 检查项：Airflow Pool落库事实
 优先级：高权重项
 所属层级：L8运行验证或可执行行为层
-标准答案：Airflow元数据库中的gpu_standard.slots为4，gpu_memory.slots为5，两者include_deferred均为false，description分别与pool_plan.csv一致。
+标准答案：Airflow元数据库中的gpu_standard.slots为4，gpu_memory.slots为5，两者include_deferred及description分别与pool_plan.csv一致。
 关键字段：pool_name、slots、include_deferred、description
 容差：槽位按整数精确比较，其余字段逐字比较
 失败边界：只在报告中填写而元数据库无对应Pool，或任一字段与输入不符，本项失败
@@ -89,8 +89,8 @@
 检查项：报告来源与跨表一致性
 优先级：普通项
 所属层级：L9跨产物一致性与可追溯层
-标准答案：run_outcomes.csv中的状态与同一逻辑日期的DagRun一致；task_instance_evidence.csv中的状态来自对应run_id的TaskInstance，pool和pool_slots与最终DAG任务一致；lease_events.csv来自本次任务产生的事件。scenario_id、task_id和object_id可以反向连接，不能只按预期状态生成报告。
-关键字段：logical_date、scenario_id、task_id、map_index、state、pool、pool_slots、event_order、event_type、object_id
+标准答案：run_outcomes.csv中的状态与同一逻辑日期的DagRun一致；task_instance_evidence.csv中的状态来自对应run_id的TaskInstance，pool和pool_slots与最终DAG任务一致；lease_events.csv来自本次任务产生的事件，其中申请事件detail原样取自training_requests.csv，租约事件detail原样取自release_policy.json。scenario_id、task_id和object_id可以反向连接，不能只按预期状态生成报告。
+关键字段：logical_date、scenario_id、task_id、map_index、state、pool、pool_slots、event_order、event_type、object_id、detail
 容差：结构化字段精确比较，CSV行序不计分
 失败边界：报告与元数据库、DAG或本次事件任一不一致，出现缺行、重复业务主键或无法反向连接的记录，本项失败
 可观察证据：Airflow元数据库、最终DAG、本次任务日志和五份CSV报告

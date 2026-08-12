@@ -63,7 +63,7 @@ def write_event(scenario_id: str, event_order: int, event_type: str, object_id: 
 def acquire_release_lease(**context) -> None:
     policy = read_policy()
     scenario_id = context["dag_run"].conf["scenario_id"]
-    write_event(scenario_id, 0, "LEASE_ACQUIRED", policy["lease_name"], "release window opened")
+    write_event(scenario_id, int(policy["lease_acquired_order"]), "LEASE_ACQUIRED", policy["lease_name"], policy["lease_acquired_detail"])
 
 
 def verify_request(request: dict[str, str], **context) -> None:
@@ -76,16 +76,7 @@ def verify_request(request: dict[str, str], **context) -> None:
         int(request["release_order"]),
         "REQUEST_VERIFIED",
         request["request_id"],
-        "|".join(
-            [
-                f"team={request['team_id']}",
-                f"owner={request['release_owner']}",
-                f"model={request['model_family']}",
-                f"slice={request['dataset_slice']}",
-                f"pool={request['pool_name']}",
-                f"slots={request['pool_slots']}",
-            ]
-        ),
+        request["event_detail"],
     )
 
 
@@ -93,7 +84,7 @@ def release_release_lease(**context) -> None:
     policy = read_policy()
     dag_run = context["dag_run"]
     scenario_id = dag_run.conf["scenario_id"]
-    write_event(scenario_id, 999, "LEASE_RELEASED", policy["lease_name"], "release window closed")
+    write_event(scenario_id, int(policy["lease_released_order"]), "LEASE_RELEASED", policy["lease_name"], policy["lease_released_detail"])
     failed_requests = sorted(
         instance.task_id
         for instance in dag_run.get_task_instances()
@@ -104,7 +95,6 @@ def release_release_lease(**context) -> None:
 
 
 requests = sorted(read_csv("training_requests.csv"), key=lambda row: (int(row["release_order"]), row["request_id"]))
-teams = {row["team_id"]: row for row in read_csv("team_controls.csv")}
 policy = read_policy()
 
 with DAG(
@@ -122,13 +112,11 @@ with DAG(
 
     groups = []
     for request in requests:
-        team = teams[request["team_id"]]
-        request_context = {**request, "release_owner": team["release_owner"]}
         with TaskGroup(group_id=request["task_group_id"]) as request_group:
             PythonOperator(
                 task_id=policy["request_task_id"],
                 python_callable=verify_request,
-                op_kwargs={"request": request_context},
+                op_kwargs={"request": request},
                 pool=request["pool_name"],
                 pool_slots=int(request["pool_slots"]),
             )

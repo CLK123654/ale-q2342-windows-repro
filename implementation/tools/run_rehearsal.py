@@ -51,6 +51,9 @@ def validate_inputs(input_root: Path) -> tuple[list[dict], list[dict], list[dict
     unique(report_contract, "report_path")
     team_by_id = {row["team_id"]: row for row in teams}
     pool_by_name = {row["pool_name"]: row for row in pools}
+    for pool in pools:
+        if pool["include_deferred"] not in {"true", "false"}:
+            fail(f"invalid include_deferred for {pool['pool_name']}")
     request_ids = {row["request_id"] for row in requests}
     for request in requests:
         team = team_by_id.get(request["team_id"])
@@ -63,13 +66,25 @@ def validate_inputs(input_root: Path) -> tuple[list[dict], list[dict], list[dict
         slots = int(request["pool_slots"])
         if slots < 1 or slots > int(team["max_pool_slots"]):
             fail(f"pool slot limit exceeded for {request['request_id']}")
+        expected_detail = "|".join(
+            [
+                f"team={request['team_id']}",
+                f"owner={team['release_owner']}",
+                f"model={request['model_family']}",
+                f"slice={request['dataset_slice']}",
+                f"pool={request['pool_name']}",
+                f"slots={request['pool_slots']}",
+            ]
+        )
+        if request["event_detail"] != expected_detail:
+            fail(f"event detail mismatch for {request['request_id']}")
     for scenario in scenarios:
         fail_id = scenario["fail_request_id"]
         if fail_id and fail_id not in request_ids:
             fail(f"unknown failure request for {scenario['scenario_id']}")
         if scenario["expected_dag_state"] not in {"success", "failed"}:
             fail(f"invalid expected state for {scenario['scenario_id']}")
-    required = {"dag_id", "setup_task_id", "teardown_task_id", "request_task_id", "lease_name", "schedule", "max_active_runs", "catchup", "failure_message", "required_event_types"}
+    required = {"dag_id", "setup_task_id", "teardown_task_id", "request_task_id", "lease_name", "schedule", "max_active_runs", "catchup", "failure_message", "teardown_trigger_rule", "lease_acquired_order", "lease_released_order", "lease_acquired_detail", "lease_released_detail", "required_event_types"}
     if set(policy) != required:
         fail("release policy keys are incomplete")
     expected_reports = {
@@ -97,12 +112,12 @@ def install_pools(pools: list[dict]) -> list[dict]:
         for row in pools:
             current = session.query(Pool).filter(Pool.pool == row["pool_name"]).one_or_none()
             if current is None:
-                current = Pool(pool=row["pool_name"], slots=int(row["slots"]), description=row["description"], include_deferred=False)
+                current = Pool(pool=row["pool_name"], slots=int(row["slots"]), description=row["description"], include_deferred=row["include_deferred"] == "true")
                 session.add(current)
             else:
                 current.slots = int(row["slots"])
                 current.description = row["description"]
-                current.include_deferred = False
+                current.include_deferred = row["include_deferred"] == "true"
     names = {row["pool_name"] for row in pools}
     with create_session() as session:
         actual = session.query(Pool).filter(Pool.pool.in_(names)).all()
@@ -183,6 +198,9 @@ def main() -> None:
     dag = bag.get_dag(policy["dag_id"])
     if dag is None:
         fail("required DAG is missing")
+    teardown = dag.get_task(policy["teardown_task_id"])
+    if str(teardown.trigger_rule) != policy["teardown_trigger_rule"]:
+        fail("teardown trigger rule does not match release policy")
 
     contract_rows = dag_contract(dag)
     write_csv(output_root / "reports" / "pool_configuration.csv", contract_fields(report_contract, "reports/pool_configuration.csv"), pool_rows)

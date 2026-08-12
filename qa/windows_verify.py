@@ -153,7 +153,7 @@ def main() -> None:
         if row["pool_name"] == "gpu_standard":
             row["slots"] = "5"
     with pool_plan.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["pool_name", "slots", "description"], lineterminator="\n")
+        writer = csv.DictWriter(handle, fieldnames=["pool_name", "slots", "include_deferred", "description"], lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     positive_output = positive / "output"
