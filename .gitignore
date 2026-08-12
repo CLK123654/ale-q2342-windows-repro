@@ -1,0 +1,6 @@
+.qa-run/
+evidence/
+airflow-home/
+.venv/
+__pycache__/
+*.pyc

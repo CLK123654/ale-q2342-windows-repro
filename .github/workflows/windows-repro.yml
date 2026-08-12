@@ -1,0 +1,70 @@
+name: q2342-windows-repro
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record Windows host
+        shell: pwsh
+        run: |
+          $hostInfo = [ordered]@{
+            caption = (Get-CimInstance Win32_OperatingSystem).Caption
+            version = (Get-CimInstance Win32_OperatingSystem).Version
+            build = (Get-CimInstance Win32_OperatingSystem).BuildNumber
+            runner_image = $env:ImageOS
+            commit_sha = $env:GITHUB_SHA
+            workflow_run_id = $env:GITHUB_RUN_ID
+          }
+          New-Item -ItemType Directory -Force -Path host-evidence | Out-Null
+          $hostInfo | ConvertTo-Json | Set-Content -Encoding utf8NoBOM host-evidence/windows-host.json
+          wsl.exe --version | Out-File -Encoding utf8 host-evidence/wsl-version.txt
+
+      - name: Install Ubuntu and Apache Airflow
+        shell: pwsh
+        run: |
+          wsl.exe --install --distribution Ubuntu-24.04 --no-launch --web-download
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv rsync"
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "python3 -m venv /root/airflow-venv && source /root/airflow-venv/bin/activate && python -m pip install --upgrade pip && python -m pip install apache-airflow==2.10.5 --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.5/constraints-3.12.txt && airflow version"
+
+      - name: Stage task inside WSL2
+        shell: pwsh
+        run: |
+          $workspace = $env:GITHUB_WORKSPACE
+          $wslWorkspace = (wsl.exe --distribution Ubuntu-24.04 --user root -- wslpath -a $workspace).Trim()
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "rsync -a --exclude=.git '$wslWorkspace/' /root/q2342/"
+
+      - name: Run formal reproduction without external network
+        shell: pwsh
+        run: |
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "cd /root/q2342 && source /root/airflow-venv/bin/activate && python qa/windows_verify.py"
+
+      - name: Collect independent evidence
+        if: always()
+        shell: pwsh
+        run: |
+          $workspace = $env:GITHUB_WORKSPACE
+          $wslWorkspace = (wsl.exe --distribution Ubuntu-24.04 --user root -- wslpath -a $workspace).Trim()
+          wsl.exe --distribution Ubuntu-24.04 --user root -- bash -lc "if [ -d /root/q2342/evidence ]; then mkdir -p '$wslWorkspace/evidence' && cp -a /root/q2342/evidence/. '$wslWorkspace/evidence/'; fi"
+          New-Item -ItemType Directory -Force -Path evidence/network-evidence | Out-Null
+          Copy-Item host-evidence/* evidence/network-evidence/
+
+      - name: Upload independent evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: q2342-windows-evidence
+          path: evidence/**
+          if-no-files-found: error
+          retention-days: 1

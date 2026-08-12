@@ -1,0 +1,7 @@
+支持的操作系统为Windows11。Apache Airflow不在Windows原生运行，本任务使用Windows11主机中的WSL2和Ubuntu24.04执行。
+
+主软件为Apache Airflow2.10.5，使用SQLite元数据库和内置调试运行入口。Python版本为3.12，AIRFLOW_HOME必须是本次工作的独立可写目录，examples关闭，dags目录只装载本题最终DAG。
+
+辅助工具包括PowerShell7、WSL命令行、Python标准库、UTF-8文本编辑器和CSV查看器。安装Apache Airflow及其约束依赖时需要联网，开始处理输入后不需要外部服务、云账号、GPU或生产Airflow环境。Apache Airflow按Apache License2.0使用。
+
+输入目录只读，交付目录和AIRFLOW_HOME需要新建文件及子目录的权限。任务每次从未初始化的元数据库开始，两个场景使用输入给定的不同逻辑日期，避免与已有DagRun冲突。主要风险是报告直接抄写预期状态、Pool只写入CSV而未落库、teardown释放租约后错误地把失败DagRun改成成功，以及失败任务后面的申请仍被执行。

@@ -1,0 +1,7 @@
+1.读取输入中的申请、团队控制、Pool方案、演练场景和发布策略，确认主键及关联关系
+2.在Windows11的WSL2中建立独立AIRFLOW_HOME，关闭examples并初始化Apache Airflow2.10.5元数据库
+3.读取pool_plan.csv，创建或更新gpu_standard和gpu_memory两个Pool，再从元数据库回读容量
+4.把完成后的DAG放入dags目录，通过DagBag确认shared_gpu_release_rehearsal能够导入且没有import_errors
+5.按rehearsal_scenarios.csv提供的逻辑日期和失败对象分别运行两个DagRun，不在代码中替换输入结果
+6.查询DagRun和TaskInstance状态，连同DAG结构、Pool配置和租约事件写入reports目录
+7.确认校验中止场景中REQ-2404失败、后续申请未执行、租约释放完成且DagRun为failed

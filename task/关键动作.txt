@@ -1,0 +1,5 @@
+校验训练申请、团队控制、Pool方案和演练场景之间的主键及边界关系
+把输入中的Pool容量写入Airflow元数据库并回读实际配置
+用setup、顺序任务组和teardown组成发布演练DAG，逐项绑定pool和pool_slots
+通过DagBag装载最终DAG并实际运行发布就绪与校验中止两个DagRun
+从DagRun、TaskInstance和租约事件导出结构化交接报告，核对失败后的释放闭环
