@@ -1,4 +1,4 @@
-1.读取输入中的申请、团队控制、Pool方案、演练场景和发布策略，确认主键及关联关系
+1.读取输入中的申请、团队控制、Pool方案、演练场景、发布策略和报告合同，确认主键及关联关系
 2.在Windows11的WSL2中建立独立AIRFLOW_HOME，关闭examples并初始化Apache Airflow2.10.5元数据库
 3.读取pool_plan.csv，创建或更新gpu_standard和gpu_memory两个Pool，再从元数据库回读容量
 4.把完成后的DAG放入dags目录，通过DagBag确认shared_gpu_release_rehearsal能够导入且没有import_errors

@@ -31,11 +31,12 @@ def fail(message: str) -> None:
     raise ValueError(message)
 
 
-def validate_inputs(input_root: Path) -> tuple[list[dict], list[dict], list[dict], list[dict], dict]:
+def validate_inputs(input_root: Path) -> tuple[list[dict], list[dict], list[dict], list[dict], dict, list[dict]]:
     requests = read_csv(input_root / "training_requests.csv")
     teams = read_csv(input_root / "team_controls.csv")
     pools = read_csv(input_root / "pool_plan.csv")
     scenarios = read_csv(input_root / "rehearsal_scenarios.csv")
+    report_contract = read_csv(input_root / "report_contract.csv")
     policy = json.loads((input_root / "release_policy.json").read_text(encoding="utf-8"))
 
     def unique(rows: list[dict], key: str) -> None:
@@ -47,6 +48,7 @@ def validate_inputs(input_root: Path) -> tuple[list[dict], list[dict], list[dict
     unique(teams, "team_id")
     unique(pools, "pool_name")
     unique(scenarios, "scenario_id")
+    unique(report_contract, "report_path")
     team_by_id = {row["team_id"]: row for row in teams}
     pool_by_name = {row["pool_name"]: row for row in pools}
     request_ids = {row["request_id"] for row in requests}
@@ -67,10 +69,27 @@ def validate_inputs(input_root: Path) -> tuple[list[dict], list[dict], list[dict
             fail(f"unknown failure request for {scenario['scenario_id']}")
         if scenario["expected_dag_state"] not in {"success", "failed"}:
             fail(f"invalid expected state for {scenario['scenario_id']}")
-    required = {"dag_id", "lease_name", "schedule", "max_active_runs", "catchup", "failure_message", "required_event_types"}
+    required = {"dag_id", "setup_task_id", "teardown_task_id", "request_task_id", "lease_name", "schedule", "max_active_runs", "catchup", "failure_message", "required_event_types"}
     if set(policy) != required:
         fail("release policy keys are incomplete")
-    return requests, teams, pools, scenarios, policy
+    expected_reports = {
+        "reports/dag_contract.csv",
+        "reports/pool_configuration.csv",
+        "reports/run_outcomes.csv",
+        "reports/task_instance_evidence.csv",
+        "reports/lease_events.csv",
+    }
+    if {row["report_path"] for row in report_contract} != expected_reports:
+        fail("report contract paths are incomplete")
+    for row in report_contract:
+        if not row["field_order"] or not row["business_key"] or not row["consumer"]:
+            fail(f"report contract is incomplete for {row['report_path']}")
+    return requests, teams, pools, scenarios, policy, report_contract
+
+
+def contract_fields(report_contract: list[dict], report_path: str) -> list[str]:
+    row = next(item for item in report_contract if item["report_path"] == report_path)
+    return row["field_order"].split("|")
 
 
 def install_pools(pools: list[dict]) -> list[dict]:
@@ -129,7 +148,7 @@ def query_run(dag_id: str, logical_date) -> tuple[DagRun, list[TaskInstance]]:
 
 def collect_events(root: Path) -> list[dict]:
     rows = []
-    for path in sorted((root / "runtime_events").glob("*/*.json")):
+    for path in sorted((root / ".runtime_events").glob("*/*.json")):
         rows.append(json.loads(path.read_text(encoding="utf-8")))
     return sorted(rows, key=lambda row: (row["scenario_id"], int(row["event_order"]), row["event_type"], row["object_id"]))
 
@@ -145,7 +164,7 @@ def main() -> None:
     dag_file = Path(args.dag_file).resolve()
     if output_root.exists():
         fail("output directory must not exist")
-    requests, teams, pools, scenarios, policy = validate_inputs(input_root)
+    requests, teams, pools, scenarios, policy, report_contract = validate_inputs(input_root)
     output_root.mkdir(parents=True)
     os.environ["REHEARSAL_INPUT_ROOT"] = str(input_root)
     os.environ["REHEARSAL_OUTPUT_ROOT"] = str(output_root)
@@ -166,10 +185,10 @@ def main() -> None:
         fail("required DAG is missing")
 
     contract_rows = dag_contract(dag)
-    write_csv(output_root / "reports" / "pool_configuration.csv", ["pool_name", "slots", "include_deferred", "description"], pool_rows)
+    write_csv(output_root / "reports" / "pool_configuration.csv", contract_fields(report_contract, "reports/pool_configuration.csv"), pool_rows)
     write_csv(
         output_root / "reports" / "dag_contract.csv",
-        ["task_id", "operator", "upstream_task_ids", "downstream_task_ids", "pool", "pool_slots", "is_setup", "is_teardown", "trigger_rule"],
+        contract_fields(report_contract, "reports/dag_contract.csv"),
         contract_rows,
     )
 
@@ -210,21 +229,31 @@ def main() -> None:
             )
 
     event_rows = collect_events(output_root)
+    required_event_types = set(policy["required_event_types"])
+    for scenario in scenarios:
+        scenario_events = [row for row in event_rows if row["scenario_id"] == scenario["scenario_id"]]
+        observed_types = {row["event_type"] for row in scenario_events}
+        if observed_types != required_event_types:
+            fail(f"event types do not match release policy for {scenario['scenario_id']}")
+        for event_type in ("LEASE_ACQUIRED", "LEASE_RELEASED"):
+            if sum(row["event_type"] == event_type for row in scenario_events) != 1:
+                fail(f"lease event count is invalid for {scenario['scenario_id']} and {event_type}")
     write_csv(
         output_root / "reports" / "run_outcomes.csv",
-        ["scenario_id", "logical_date", "expected_dag_state", "observed_dag_state", "fail_request_id", "lease_released_count"],
+        contract_fields(report_contract, "reports/run_outcomes.csv"),
         outcome_rows,
     )
     write_csv(
         output_root / "reports" / "task_instance_evidence.csv",
-        ["scenario_id", "task_id", "map_index", "state", "try_number", "pool", "pool_slots"],
+        contract_fields(report_contract, "reports/task_instance_evidence.csv"),
         instance_rows,
     )
     write_csv(
         output_root / "reports" / "lease_events.csv",
-        ["scenario_id", "event_order", "event_type", "object_id", "detail"],
+        contract_fields(report_contract, "reports/lease_events.csv"),
         event_rows,
     )
+    shutil.rmtree(output_root / ".runtime_events")
 
     expected = {row["scenario_id"]: row["expected_dag_state"] for row in scenarios}
     for row in outcome_rows:

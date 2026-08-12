@@ -41,7 +41,7 @@ def slug(value: str) -> str:
 
 
 def event_path(scenario_id: str, event_order: int, event_type: str, object_id: str) -> Path:
-    folder = output_root() / "runtime_events" / scenario_id
+    folder = output_root() / ".runtime_events" / scenario_id
     folder.mkdir(parents=True, exist_ok=True)
     return folder / f"{event_order:03d}_{event_type.lower()}_{slug(object_id)}.json"
 
@@ -76,7 +76,16 @@ def verify_request(request: dict[str, str], **context) -> None:
         int(request["release_order"]),
         "REQUEST_VERIFIED",
         request["request_id"],
-        f"{request['pool_name']}:{request['pool_slots']}",
+        "|".join(
+            [
+                f"team={request['team_id']}",
+                f"owner={request['release_owner']}",
+                f"model={request['model_family']}",
+                f"slice={request['dataset_slice']}",
+                f"pool={request['pool_name']}",
+                f"slots={request['pool_slots']}",
+            ]
+        ),
     )
 
 
@@ -95,6 +104,7 @@ def release_release_lease(**context) -> None:
 
 
 requests = sorted(read_csv("training_requests.csv"), key=lambda row: (int(row["release_order"]), row["request_id"]))
+teams = {row["team_id"]: row for row in read_csv("team_controls.csv")}
 policy = read_policy()
 
 with DAG(
@@ -106,17 +116,19 @@ with DAG(
     tags=["gpu-release", "rehearsal"],
 ) as dag:
     acquire = PythonOperator(
-        task_id="acquire_release_lease",
+        task_id=policy["setup_task_id"],
         python_callable=acquire_release_lease,
     ).as_setup()
 
     groups = []
     for request in requests:
-        with TaskGroup(group_id=f"request_{slug(request['request_id'])}") as request_group:
+        team = teams[request["team_id"]]
+        request_context = {**request, "release_owner": team["release_owner"]}
+        with TaskGroup(group_id=request["task_group_id"]) as request_group:
             PythonOperator(
-                task_id="verify",
+                task_id=policy["request_task_id"],
                 python_callable=verify_request,
-                op_kwargs={"request": request},
+                op_kwargs={"request": request_context},
                 pool=request["pool_name"],
                 pool_slots=int(request["pool_slots"]),
             )
@@ -127,7 +139,7 @@ with DAG(
         previous >> following
 
     release = PythonOperator(
-        task_id="release_release_lease",
+        task_id=policy["teardown_task_id"],
         python_callable=release_release_lease,
     ).as_teardown(setups=acquire, on_failure_fail_dagrun=True)
 
