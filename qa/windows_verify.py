@@ -171,20 +171,80 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    negative = RUN_ROOT / "negative"
-    negative_input = negative / "input"
-    extract(TASK / "输入数据包.zip", negative_input)
-    requests = negative_input / "input_data" / "training_requests.csv"
-    lines = requests.read_text(encoding="utf-8").splitlines()
-    lines.append(lines[1])
-    requests.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    negative_output = negative / "output"
-    migrate, process = build(negative_input, negative_output, ROOT / "implementation" / "dags" / "shared_gpu_release_rehearsal.py", negative / "airflow-home")
+    negative_logs = []
+
+    def negative_case(case_id: str, mutate) -> None:
+        base = RUN_ROOT / "negative" / case_id
+        input_root = base / "input"
+        extract(TASK / "输入数据包.zip", input_root)
+        mutate(input_root / "input_data")
+        output_root = base / "output"
+        migrate, process = build(
+            input_root,
+            output_root,
+            ROOT / "implementation" / "dags" / "shared_gpu_release_rehearsal.py",
+            base / "airflow-home",
+        )
+        if migrate.returncode != 0:
+            raise RuntimeError(migrate.stdout + migrate.stderr)
+        if process.returncode == 0 or output_root.exists():
+            raise AssertionError(f"{case_id} did not fail closed")
+        negative_logs.append(f"[{case_id}] exit={process.returncode}\n{process.stdout}{process.stderr}")
+
+    def duplicate_request(input_data: Path) -> None:
+        path = input_data / "training_requests.csv"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        path.write_text("\n".join(lines + [lines[1]]) + "\n", encoding="utf-8")
+
+    def update_csv(input_data: Path, filename: str, key: str, value: str) -> None:
+        path = input_data / filename
+        rows = list(csv.DictReader(path.open(encoding="utf-8", newline="")))
+        rows[0][key] = value
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+
+    negative_case("duplicate-request", duplicate_request)
+    negative_case("unknown-team", lambda root: update_csv(root, "training_requests.csv", "team_id", "unknown"))
+    negative_case("pool-mismatch", lambda root: update_csv(root, "training_requests.csv", "pool_name", "gpu_memory"))
+    negative_case("slot-limit", lambda root: update_csv(root, "training_requests.csv", "pool_slots", "3"))
+    negative_case("unknown-failure-object", lambda root: update_csv(root, "rehearsal_scenarios.csv", "fail_request_id", "REQ-9999"))
+
+    boundary = RUN_ROOT / "negative" / "existing-output"
+    boundary_input = boundary / "input"
+    extract(TASK / "输入数据包.zip", boundary_input)
+    boundary_output = boundary / "output"
+    boundary_output.mkdir(parents=True)
+    marker = boundary_output / "keep.txt"
+    marker.write_text("keep\n", encoding="utf-8")
+    migrate, process = build(
+        boundary_input,
+        boundary_output,
+        ROOT / "implementation" / "dags" / "shared_gpu_release_rehearsal.py",
+        boundary / "airflow-home",
+    )
     if migrate.returncode != 0:
         raise RuntimeError(migrate.stdout + migrate.stderr)
-    if process.returncode == 0 or negative_output.exists():
-        raise AssertionError("duplicate request did not fail closed")
-    (EVIDENCE / "negative-case.log").write_text(process.stdout + process.stderr, encoding="utf-8")
+    if process.returncode == 0 or marker.read_text(encoding="utf-8") != "keep\n" or sorted(path.name for path in boundary_output.iterdir()) != ["keep.txt"]:
+        raise AssertionError("existing output boundary did not fail closed")
+    negative_logs.append(f"[existing-output] exit={process.returncode}\n{process.stdout}{process.stderr}")
+
+    missing = run(
+        [
+            sys.executable,
+            str(ROOT / "implementation" / "tools" / "run_rehearsal.py"),
+            "--input",
+            str(boundary_input / "input_data"),
+            "--output",
+            str(RUN_ROOT / "negative" / "missing-parameter-output"),
+        ],
+        airflow_env(RUN_ROOT / "negative" / "missing-parameter-home"),
+    )
+    if missing.returncode == 0 or (RUN_ROOT / "negative" / "missing-parameter-output").exists():
+        raise AssertionError("missing parameter did not fail closed")
+    negative_logs.append(f"[missing-parameter] exit={missing.returncode}\n{missing.stdout}{missing.stderr}")
+    (EVIDENCE / "negative-case.log").write_text("\n".join(negative_logs), encoding="utf-8")
 
     summary = {
         "result": "PASS",
@@ -204,6 +264,7 @@ def main() -> None:
         "clean_runs": clean_runs,
         "positive_mutation": "PASS",
         "negative_case": "PASS",
+        "negative_case_count": 7,
     }
     (EVIDENCE / "windows-summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
