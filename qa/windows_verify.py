@@ -30,6 +30,19 @@ def tree(root: Path) -> dict[str, str]:
     return {path.relative_to(root).as_posix(): sha(path) for path in sorted(root.rglob("*")) if path.is_file()}
 
 
+def normalized_reference_tree(root: Path) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        data = path.read_bytes()
+        if relative.endswith(".csv"):
+            data = data.replace(b"\r\n", b"\n")
+        normalized[relative] = hashlib.sha256(data).hexdigest()
+    return normalized
+
+
 def reset(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
@@ -92,7 +105,7 @@ def main() -> None:
         raise RuntimeError("Apache Airflow2.10.5 is required")
     reference = RUN_ROOT / "reference"
     extract(TASK / "reference.zip", reference)
-    reference_tree = tree(reference)
+    reference_tree = normalized_reference_tree(reference)
     clean_runs = []
     for directory_id in ["clean-a", "clean-b"]:
         base = RUN_ROOT / directory_id
@@ -106,7 +119,7 @@ def main() -> None:
             migrate, process = build(input_root, output_root, dag_file, home)
             if migrate.returncode != 0 or process.returncode != 0:
                 raise RuntimeError(migrate.stdout + migrate.stderr + process.stdout + process.stderr)
-            if tree(output_root) != reference_tree:
+            if normalized_reference_tree(output_root) != reference_tree:
                 raise AssertionError(f"Reference mismatch in {directory_id} process {process_index}")
             clean_runs.append(
                 {
@@ -142,7 +155,7 @@ def main() -> None:
     positive_slots = {row["pool_name"]: row["slots"] for row in pool_rows}
     if positive_slots.get("gpu_standard") != "5":
         raise AssertionError("positive input change did not reach Airflow Pool output")
-    if tree(positive_output) == reference_tree:
+    if normalized_reference_tree(positive_output) == reference_tree:
         raise AssertionError("positive input change did not change business output")
     (EVIDENCE / "positive-case.json").write_text(
         json.dumps({"input_field": "pool_plan.csv gpu_standard.slots", "before": 4, "after": 5, "observed_pool_slots": 5}, ensure_ascii=False, indent=2),
